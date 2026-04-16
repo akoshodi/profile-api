@@ -66,9 +66,8 @@ function json(Response $response, array $data, int $status = 200): Response
 
 function utcNow(): string
 {
-    return new \DateTimeImmutable("now", new \DateTimeZone("UTC"))->format(
-        "Y-m-d\TH:i:s\Z",
-    );
+    $dt = new \DateTimeImmutable("now", new \DateTimeZone("UTC"));
+    return $dt->format("Y-m-d\TH:i:s\Z");
 }
 
 // ── Format helpers ────────────────────────────────────────────────────────────
