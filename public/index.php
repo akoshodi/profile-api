@@ -35,6 +35,42 @@ $app = AppFactory::create();
 // ── Body Parsing Middleware ───────────────────────────────────────────────────
 $app->addBodyParsingMiddleware();
 
+// ── Error Middleware ───────────────────────────────────────────────────────────
+$errorMiddleware = $app->addErrorMiddleware(false, true, true);
+
+$errorMiddleware->setDefaultErrorHandler(function (
+    Request $request,
+    \Throwable $exception,
+    bool $displayErrorDetails,
+) use ($app): Response {
+    $response = $app->getResponseFactory()->createResponse();
+
+    $status = 500;
+    $message = "Internal server error.";
+
+    if ($exception instanceof \Slim\Exception\HttpNotFoundException) {
+        $status = 404;
+        $message = "The requested route does not exist.";
+    } elseif (
+        $exception instanceof \Slim\Exception\HttpMethodNotAllowedException
+    ) {
+        $status = 405;
+        $message = "Method not allowed.";
+    }
+
+    $response->getBody()->write(
+        json_encode([
+            "status" => "error",
+            "message" => $message,
+        ]),
+    );
+
+    return $response
+        ->withHeader("Content-Type", "application/json")
+        ->withHeader("Access-Control-Allow-Origin", "*")
+        ->withStatus($status);
+});
+
 // ── CORS Middleware ───────────────────────────────────────────────────────────
 $app->add(function (Request $request, $handler): Response {
     $response = $handler->handle($request);
@@ -331,4 +367,5 @@ $app->delete("/api/profiles/{id}", function (
 });
 
 // ── Run ───────────────────────────────────────────────────────────────────────
+$app->addRoutingMiddleware();
 $app->run();
