@@ -1,0 +1,26 @@
+{
+  "name": "akoshodi/profiles-api",
+  "type": "project",
+  "authors": [
+    {
+      "name": "Akinwale Oshodi",
+      "email": "akoshodi@gmail.com"
+    }
+  ],
+  "require": {
+    "slim/slim": "4.*",
+    "slim/psr7": "^1.8",
+    "php-di/php-di": "^7.1",
+    "guzzlehttp/guzzle": "^7.10",
+    "vlucas/phpdotenv": "^5.6",
+    "ramsey/uuid": "^4.9"
+  },
+  "autoload": {
+    "psr-4": {
+      "App\\": "src/"
+    },
+    "files": [
+      "src/Services/NationalizeService.php"
+    ]
+  }
+}
