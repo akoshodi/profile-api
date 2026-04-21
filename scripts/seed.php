@@ -11,16 +11,9 @@ use Ramsey\Uuid\Uuid;
 $dotenv = Dotenv::createImmutable(__DIR__ . "/..");
 $dotenv->safeLoad();
 
-$dbPath = $_ENV["DB_PATH"] ?? __DIR__ . "/../database/profiles.db";
-$dir = dirname($dbPath);
-
-if (!is_dir($dir)) {
-    mkdir($dir, 0755, recursive: true);
-}
-
-$pdo = new PDO("sqlite:{$dbPath}");
-$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-$pdo->exec("PRAGMA journal_mode=WAL");
+// Boot Database class — this runs the migration and creates the profiles table
+$db = new \App\Database();
+$pdo = $db->getPdo();
 
 // Load seed data
 $jsonPath = __DIR__ . "/../data/profiles.json";
@@ -29,9 +22,17 @@ if (!file_exists($jsonPath)) {
     exit(1);
 }
 
-$profiles = json_decode(file_get_contents($jsonPath), associative: true);
-if (!$profiles) {
+$decoded = json_decode(file_get_contents($jsonPath), associative: true);
+if (!$decoded) {
     echo "Error: Could not parse profiles.json\n";
+    exit(1);
+}
+
+// JSON is wrapped in a "profiles" key
+$profiles = $decoded["profiles"] ?? $decoded;
+
+if (empty($profiles) || !is_array($profiles)) {
+    echo "Error: Could not find profiles array in JSON\n";
     exit(1);
 }
 
@@ -120,7 +121,9 @@ foreach ($profiles as $profile) {
         ":age_group" =>
             $age !== null ? $ageGroup($age) : $profile["age_group"] ?? null,
         ":country_id" => $countryId,
-        ":country_name" => $countryNames[$countryId] ?? $countryId,
+        ":country_name" =>
+            $profile["country_name"] ??
+            ($countryNames[$countryId] ?? $countryId),
         ":country_probability" => isset($profile["country_probability"])
             ? (float) $profile["country_probability"]
             : null,
@@ -131,7 +134,7 @@ foreach ($profiles as $profile) {
             ),
     ]);
 
-    if ($pdo->changes() > 0) {
+    if ($stmt->rowCount() > 0) {
         $inserted++;
     } else {
         $skipped++;
