@@ -12,7 +12,14 @@ class Database
 
     public function __construct()
     {
-        $dbPath = $_ENV["DB_PATH"] ?? "/app/database/profiles.db";
+        $dbPath = $_ENV["DB_PATH"] ?? "database/profiles.db";
+
+        // Resolve relative DB paths from project root so CLI scripts and web runtime
+        // use the same SQLite file regardless of current working directory.
+        if (!preg_match('/^(?:[A-Za-z]:[\\\\\/]|\/)/', $dbPath)) {
+            $dbPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . $dbPath;
+        }
+
         $dir = dirname($dbPath);
 
         // Create directory if it doesn't exist
@@ -74,6 +81,8 @@ class Database
              CREATE INDEX IF NOT EXISTS idx_age_group  ON profiles(age_group);
              CREATE INDEX IF NOT EXISTS idx_country_id ON profiles(country_id);
              CREATE INDEX IF NOT EXISTS idx_age        ON profiles(age);
+                 CREATE INDEX IF NOT EXISTS idx_gender_probability  ON profiles(gender_probability);
+                 CREATE INDEX IF NOT EXISTS idx_country_probability ON profiles(country_probability);
              CREATE INDEX IF NOT EXISTS idx_created_at ON profiles(created_at);
          ");
      }

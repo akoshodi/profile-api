@@ -118,7 +118,6 @@ function fullProfile(array $row): array
         "name" => $row["name"],
         "gender" => $row["gender"],
         "gender_probability" => (float) $row["gender_probability"],
-        "sample_size" => (int) $row["sample_size"],
         "age" => (int) $row["age"],
         "age_group" => $row["age_group"],
         "country_id" => $row["country_id"],
@@ -232,13 +231,14 @@ $app->post("/api/profiles", function (
         $nationalityData,
         ["created_at" => $createdAt],
     );
+    unset($profile["sample_size"]);
 
     $insert = $pdo->prepare("
         INSERT INTO profiles
-            (id, name, gender, gender_probability, sample_size,
+            (id, name, gender, gender_probability,
              age, age_group, country_id, country_probability, created_at)
         VALUES
-            (:id, :name, :gender, :gender_probability, :sample_size,
+            (:id, :name, :gender, :gender_probability,
              :age, :age_group, :country_id, :country_probability, :created_at)
     ");
     $insert->execute($profile);
@@ -265,6 +265,28 @@ $app->get("/api/profiles", function (Request $request, Response $response) use (
     $p = $request->getQueryParams();
     $pdo = $container->get(Database::class)->getPdo();
 
+    $allowedParams = [
+        "gender",
+        "age_group",
+        "country_id",
+        "min_age",
+        "max_age",
+        "min_gender_probability",
+        "min_country_probability",
+        "sort_by",
+        "order",
+        "page",
+        "limit",
+    ];
+    $unknownParams = array_diff(array_keys($p), $allowedParams);
+    if (!empty($unknownParams)) {
+        return json(
+            $response,
+            ["status" => "error", "message" => "Invalid query parameters"],
+            400,
+        );
+    }
+
     // ── Validate sort_by and order params ─────────────────────────────────────
     $allowedSortBy = ["age", "created_at", "gender_probability"];
     $allowedOrder = ["asc", "desc"];
@@ -281,6 +303,58 @@ $app->get("/api/profiles", function (Request $request, Response $response) use (
             ],
             400,
         );
+    }
+
+    if (
+        isset($p["gender"]) &&
+        !in_array(strtolower((string) $p["gender"]), ["male", "female"], strict: true)
+    ) {
+        return json(
+            $response,
+            ["status" => "error", "message" => "Invalid query parameters"],
+            400,
+        );
+    }
+
+    if (
+        isset($p["age_group"]) &&
+        !in_array(strtolower((string) $p["age_group"]), ["child", "teenager", "adult", "senior"], strict: true)
+    ) {
+        return json(
+            $response,
+            ["status" => "error", "message" => "Invalid query parameters"],
+            400,
+        );
+    }
+
+    if (
+        isset($p["country_id"]) &&
+        !preg_match('/^[a-zA-Z]{2}$/', (string) $p["country_id"])
+    ) {
+        return json(
+            $response,
+            ["status" => "error", "message" => "Invalid query parameters"],
+            400,
+        );
+    }
+
+    foreach (
+        [
+            "min_age",
+            "max_age",
+            "min_gender_probability",
+            "min_country_probability",
+            "page",
+            "limit",
+        ] as $numericParam
+    ) {
+        if (isset($p[$numericParam]) && !is_numeric($p[$numericParam])) {
+            return json(
+                $response,
+                ["status" => "error", "message" => "Invalid parameter type"],
+                422,
+            );
+        }
     }
     if (!in_array($order, $allowedOrder, strict: true)) {
         return json(
@@ -383,6 +457,27 @@ $app->get("/api/profiles/search", function (
     Response $response,
 ) use ($container): Response {
     $params = $request->getQueryParams();
+
+    $allowedParams = ["q", "page", "limit"];
+    $unknownParams = array_diff(array_keys($params), $allowedParams);
+    if (!empty($unknownParams)) {
+        return json(
+            $response,
+            ["status" => "error", "message" => "Invalid query parameters"],
+            400,
+        );
+    }
+
+    foreach (["page", "limit"] as $numericParam) {
+        if (isset($params[$numericParam]) && !is_numeric($params[$numericParam])) {
+            return json(
+                $response,
+                ["status" => "error", "message" => "Invalid parameter type"],
+                422,
+            );
+        }
+    }
+
     $q = trim($params["q"] ?? "");
 
     if ($q === "") {
@@ -494,7 +589,7 @@ $app->get("/api/profiles/{id}", function (
             $response,
             [
                 "status" => "error",
-                "message" => "Profile not found.",
+                "message" => "Profile not found",
             ],
             404,
         );
@@ -528,7 +623,7 @@ $app->delete("/api/profiles/{id}", function (
             $response,
             [
                 "status" => "error",
-                "message" => "Profile not found.",
+                "message" => "Profile not found",
             ],
             404,
         );
