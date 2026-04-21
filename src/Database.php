@@ -43,23 +43,40 @@ class Database
      * Run table creation if it doesn't exist yet.
      * Idempotent — safe to call on every boot.
      */
-    private function migrate(): void
-    {
-        $this->pdo->exec("
-            CREATE TABLE IF NOT EXISTS profiles (
-                id                  TEXT PRIMARY KEY,
-                name                TEXT NOT NULL UNIQUE,
-                gender              TEXT,
-                gender_probability  REAL,
-                sample_size         INTEGER,
-                age                 INTEGER,
-                age_group           TEXT,
-                country_id          TEXT,
-                country_probability REAL,
-                created_at          TEXT NOT NULL
-            )
-        ");
-    }
+     private function migrate(): void
+     {
+         $this->pdo->exec("
+             CREATE TABLE IF NOT EXISTS profiles (
+                 id                  TEXT PRIMARY KEY,
+                 name                TEXT NOT NULL UNIQUE,
+                 gender              TEXT,
+                 gender_probability  REAL,
+                 age                 INTEGER,
+                 age_group           TEXT,
+                 country_id          TEXT,
+                 country_name        TEXT,
+                 country_probability REAL,
+                 created_at          TEXT NOT NULL
+             )
+         ");
+
+         // Add country_name column if it doesn't exist yet
+         // (for existing databases being upgraded from Stage 1)
+         try {
+             $this->pdo->exec("ALTER TABLE profiles ADD COLUMN country_name TEXT");
+         } catch (\PDOException $e) {
+             // Column already exists — safe to ignore
+         }
+
+         // Indexes for performance — no full table scans
+         $this->pdo->exec("
+             CREATE INDEX IF NOT EXISTS idx_gender     ON profiles(gender);
+             CREATE INDEX IF NOT EXISTS idx_age_group  ON profiles(age_group);
+             CREATE INDEX IF NOT EXISTS idx_country_id ON profiles(country_id);
+             CREATE INDEX IF NOT EXISTS idx_age        ON profiles(age);
+             CREATE INDEX IF NOT EXISTS idx_created_at ON profiles(created_at);
+         ");
+     }
 
     public function getPdo(): PDO
     {
