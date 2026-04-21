@@ -122,6 +122,7 @@ function fullProfile(array $row): array
         "age" => (int) $row["age"],
         "age_group" => $row["age_group"],
         "country_id" => $row["country_id"],
+        "country_name" => $row["country_name"] ?? null,
         "country_probability" => (float) $row["country_probability"],
         "created_at" => $row["created_at"],
     ];
@@ -256,46 +257,219 @@ $app->post("/api/profiles", function (
 
 /**
  * GET /api/profiles
- * Return all profiles with optional filtering.
- * Filters: gender, country_id, age_group (all case-insensitive)
+ * Advanced filtering, sorting, and pagination.
  */
 $app->get("/api/profiles", function (Request $request, Response $response) use (
     $container,
 ): Response {
-    $params = $request->getQueryParams();
+    $p = $request->getQueryParams();
     $pdo = $container->get(Database::class)->getPdo();
 
+    // ── Validate sort_by and order params ─────────────────────────────────────
+    $allowedSortBy = ["age", "created_at", "gender_probability"];
+    $allowedOrder = ["asc", "desc"];
+
+    $sortBy = $p["sort_by"] ?? "created_at";
+    $order = strtolower($p["order"] ?? "desc");
+
+    if (!in_array($sortBy, $allowedSortBy, strict: true)) {
+        return json(
+            $response,
+            [
+                "status" => "error",
+                "message" => "Invalid query parameters",
+            ],
+            400,
+        );
+    }
+    if (!in_array($order, $allowedOrder, strict: true)) {
+        return json(
+            $response,
+            [
+                "status" => "error",
+                "message" => "Invalid query parameters",
+            ],
+            400,
+        );
+    }
+
+    // ── Pagination ────────────────────────────────────────────────────────────
+    $page = max(1, (int) ($p["page"] ?? 1));
+    $limit = min(50, max(1, (int) ($p["limit"] ?? 10)));
+    $offset = ($page - 1) * $limit;
+
+    // ── Build WHERE clause ────────────────────────────────────────────────────
     $where = [];
     $binds = [];
 
-    // Case-insensitive filters using LOWER()
-    if (!empty($params["gender"])) {
+    if (!empty($p["gender"])) {
         $where[] = "LOWER(gender) = LOWER(:gender)";
-        $binds[":gender"] = $params["gender"];
+        $binds[":gender"] = $p["gender"];
     }
-    if (!empty($params["country_id"])) {
-        $where[] = "LOWER(country_id) = LOWER(:country_id)";
-        $binds[":country_id"] = $params["country_id"];
-    }
-    if (!empty($params["age_group"])) {
+    if (!empty($p["age_group"])) {
         $where[] = "LOWER(age_group) = LOWER(:age_group)";
-        $binds[":age_group"] = $params["age_group"];
+        $binds[":age_group"] = $p["age_group"];
+    }
+    if (!empty($p["country_id"])) {
+        $where[] = "LOWER(country_id) = LOWER(:country_id)";
+        $binds[":country_id"] = $p["country_id"];
+    }
+    if (isset($p["min_age"]) && is_numeric($p["min_age"])) {
+        $where[] = "age >= :min_age";
+        $binds[":min_age"] = (int) $p["min_age"];
+    }
+    if (isset($p["max_age"]) && is_numeric($p["max_age"])) {
+        $where[] = "age <= :max_age";
+        $binds[":max_age"] = (int) $p["max_age"];
+    }
+    if (
+        isset($p["min_gender_probability"]) &&
+        is_numeric($p["min_gender_probability"])
+    ) {
+        $where[] = "gender_probability >= :min_gender_probability";
+        $binds[":min_gender_probability"] =
+            (float) $p["min_gender_probability"];
+    }
+    if (
+        isset($p["min_country_probability"]) &&
+        is_numeric($p["min_country_probability"])
+    ) {
+        $where[] = "country_probability >= :min_country_probability";
+        $binds[":min_country_probability"] =
+            (float) $p["min_country_probability"];
     }
 
-    $sql = "SELECT * FROM profiles";
-    if (!empty($where)) {
-        $sql .= " WHERE " . implode(" AND ", $where);
-    }
-    $sql .= " ORDER BY created_at DESC";
+    $whereClause = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
+
+    // ── Total count (for pagination metadata) ─────────────────────────────────
+    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM profiles {$whereClause}");
+    $countStmt->execute($binds);
+    $total = (int) $countStmt->fetchColumn();
+
+    // ── Fetch page ────────────────────────────────────────────────────────────
+    $sql = "
+        SELECT * FROM profiles
+        {$whereClause}
+        ORDER BY {$sortBy} {$order}
+        LIMIT :limit OFFSET :offset
+    ";
 
     $stmt = $pdo->prepare($sql);
-    $stmt->execute($binds);
+    foreach ($binds as $key => $value) {
+        $stmt->bindValue($key, $value);
+    }
+    $stmt->bindValue(":limit", $limit, PDO::PARAM_INT);
+    $stmt->bindValue(":offset", $offset, PDO::PARAM_INT);
+    $stmt->execute();
     $rows = $stmt->fetchAll();
 
     return json($response, [
         "status" => "success",
-        "count" => count($rows),
-        "data" => array_map("summaryProfile", $rows),
+        "page" => $page,
+        "limit" => $limit,
+        "total" => $total,
+        "data" => array_map("fullProfile", $rows),
+    ]);
+});
+
+//  ────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/profiles/search?q=young males from nigeria
+ * Natural language query endpoint.
+ */
+$app->get("/api/profiles/search", function (
+    Request $request,
+    Response $response,
+) use ($container): Response {
+    $params = $request->getQueryParams();
+    $q = trim($params["q"] ?? "");
+
+    if ($q === "") {
+        return json(
+            $response,
+            [
+                "status" => "error",
+                "message" => "The q parameter is required.",
+            ],
+            400,
+        );
+    }
+
+    // ── Parse the query ───────────────────────────────────────────────────────
+    try {
+        $parser = new \App\Parsers\NaturalLanguageParser();
+        $filters = $parser->parse($q);
+    } catch (\RuntimeException $e) {
+        return json(
+            $response,
+            [
+                "status" => "error",
+                "message" => "Unable to interpret query",
+            ],
+            400,
+        );
+    }
+
+    // ── Pagination ────────────────────────────────────────────────────────────
+    $page = max(1, (int) ($params["page"] ?? 1));
+    $limit = min(50, max(1, (int) ($params["limit"] ?? 10)));
+    $offset = ($page - 1) * $limit;
+
+    // ── Build WHERE from parsed filters ───────────────────────────────────────
+    $pdo = $container->get(Database::class)->getPdo();
+    $where = [];
+    $binds = [];
+
+    if (!empty($filters["gender"])) {
+        $where[] = "LOWER(gender) = :gender";
+        $binds[":gender"] = $filters["gender"];
+    }
+    if (!empty($filters["age_group"])) {
+        $where[] = "LOWER(age_group) = :age_group";
+        $binds[":age_group"] = $filters["age_group"];
+    }
+    if (!empty($filters["country_id"])) {
+        $where[] = "LOWER(country_id) = LOWER(:country_id)";
+        $binds[":country_id"] = $filters["country_id"];
+    }
+    if (isset($filters["min_age"])) {
+        $where[] = "age >= :min_age";
+        $binds[":min_age"] = $filters["min_age"];
+    }
+    if (isset($filters["max_age"])) {
+        $where[] = "age <= :max_age";
+        $binds[":max_age"] = $filters["max_age"];
+    }
+
+    $whereClause = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
+
+    // ── Count ─────────────────────────────────────────────────────────────────
+    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM profiles {$whereClause}");
+    $countStmt->execute($binds);
+    $total = (int) $countStmt->fetchColumn();
+
+    // ── Fetch ─────────────────────────────────────────────────────────────────
+    $stmt = $pdo->prepare("
+        SELECT * FROM profiles
+        {$whereClause}
+        ORDER BY created_at DESC
+        LIMIT :limit OFFSET :offset
+    ");
+    foreach ($binds as $key => $value) {
+        $stmt->bindValue($key, $value);
+    }
+    $stmt->bindValue(":limit", $limit, PDO::PARAM_INT);
+    $stmt->bindValue(":offset", $offset, PDO::PARAM_INT);
+    $stmt->execute();
+    $rows = $stmt->fetchAll();
+
+    return json($response, [
+        "status" => "success",
+        "page" => $page,
+        "limit" => $limit,
+        "total" => $total,
+        "data" => array_map("fullProfile", $rows),
     ]);
 });
 
