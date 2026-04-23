@@ -88,118 +88,109 @@ class NaturalLanguageParser
      * @throws \RuntimeException with message "Unable to interpret query"
      */
     public function parse(string $query): array
-    {
-        $q = strtolower(trim($query));
-        $filters = [];
-        $matched = false;
+{
+    $q       = strtolower(trim($query));
+    $filters = [];
+    $matched = false;
 
-        // ── Gender ────────────────────────────────────────────────────────────
-        if (
-            preg_match("/\b(male|men|man)\b/", $q) &&
-            !preg_match("/\bfemale\b/", $q)
-        ) {
-            $filters["gender"] = "male";
-            $matched = true;
-        } elseif (preg_match("/\b(female|women|woman|girl|girls)\b/", $q)) {
-            $filters["gender"] = "female";
-            $matched = true;
-        }
-        // "male and female" or "both" → no gender filter, but still parseable
-        if (
-            preg_match("/\b(male and female|both genders?|all genders?)\b/", $q)
-        ) {
-            unset($filters["gender"]);
-            $matched = true;
-        }
+    // ── Gender ────────────────────────────────────────────────────────────────
+    $hasMale   = preg_match('/\b(males?|men|man)\b/', $q);
+    $hasFemale = preg_match('/\b(females?|women|woman|girls?)\b/', $q);
 
-        // ── Age group ─────────────────────────────────────────────────────────
-        if (preg_match("/\b(child|children|kids?)\b/", $q)) {
-            $filters["age_group"] = "child";
-            $matched = true;
-        } elseif (preg_match("/\b(teen(ager)?s?|adolescents?)\b/", $q)) {
-            $filters["age_group"] = "teenager";
-            $matched = true;
-        } elseif (preg_match("/\b(adult|adults)\b/", $q)) {
-            $filters["age_group"] = "adult";
-            $matched = true;
-        } elseif (preg_match("/\b(senior|seniors|elderly|old people)\b/", $q)) {
-            $filters["age_group"] = "senior";
-            $matched = true;
-        }
-
-        // ── "young" → ages 16–24 (parsing only, not a stored age_group) ───────
-        if (preg_match("/\byoung\b/", $q)) {
-            $filters["min_age"] = 16;
-            $filters["max_age"] = 24;
-            $matched = true;
-        }
-
-        // ── Explicit age comparisons ──────────────────────────────────────────
-        // "above X" / "over X" / "older than X"
-        if (
-            preg_match(
-                "/\b(?:above|over|older than|greater than)\s+(\d+)\b/",
-                $q,
-                $m,
-            )
-        ) {
-            $filters["min_age"] = (int) $m[1];
-            $matched = true;
-        }
-        // "below X" / "under X" / "younger than X"
-        if (
-            preg_match(
-                "/\b(?:below|under|younger than|less than)\s+(\d+)\b/",
-                $q,
-                $m,
-            )
-        ) {
-            $filters["max_age"] = (int) $m[1];
-            $matched = true;
-        }
-        // "between X and Y"
-        if (preg_match("/\bbetween\s+(\d+)\s+and\s+(\d+)\b/", $q, $m)) {
-            $filters["min_age"] = (int) $m[1];
-            $filters["max_age"] = (int) $m[2];
-            $matched = true;
-        }
-        // "aged X" / "age X"
-        if (preg_match("/\baged?\s+(\d+)\b/", $q, $m)) {
-            $filters["min_age"] = (int) $m[1];
-            $filters["max_age"] = (int) $m[1];
-            $matched = true;
-        }
-
-        // ── Country ───────────────────────────────────────────────────────────
-        // Try multi-word country names first (e.g. "south africa" before "africa")
-        $sortedCountries = array_keys(self::COUNTRY_MAP);
-        usort($sortedCountries, fn($a, $b) => strlen($b) - strlen($a));
-
-        foreach ($sortedCountries as $countryName) {
-            if (str_contains($q, $countryName)) {
-                $filters["country_id"] = self::COUNTRY_MAP[$countryName];
-                $matched = true;
-                break;
-            }
-        }
-
-        // Also accept bare ISO codes: "from NG" / "in KE"
-        if (!isset($filters["country_id"])) {
-            if (preg_match("/\b(?:from|in)\s+([A-Z]{2})\b/i", $query, $m)) {
-                $filters["country_id"] = strtoupper($m[1]);
-                $matched = true;
-            }
-        }
-
-        // ── "people" / "persons" / "profiles" alone counts as parseable ───────
-        if (preg_match("/\b(people|persons?|profiles?|everyone|all)\b/", $q)) {
-            $matched = true;
-        }
-
-        if (!$matched || (empty($filters) && !$matched)) {
-            throw new \RuntimeException("Unable to interpret query");
-        }
-
-        return $filters;
+    if ($hasMale && !$hasFemale) {
+        $filters['gender'] = 'male';
+        $matched = true;
+    } elseif ($hasFemale && !$hasMale) {
+        $filters['gender'] = 'female';
+        $matched = true;
+    } elseif ($hasMale && $hasFemale) {
+        // both mentioned — no gender filter but still parseable
+        $matched = true;
     }
+
+    // ── Age group ─────────────────────────────────────────────────────────────
+    if (preg_match('/\b(children|child|kids?)\b/', $q)) {
+        $filters['age_group'] = 'child';
+        $matched = true;
+    } elseif (preg_match('/\b(teenagers?|teens?|adolescents?)\b/', $q)) {
+        $filters['age_group'] = 'teenager';
+        $matched = true;
+    } elseif (preg_match('/\badults?\b/', $q)) {
+        $filters['age_group'] = 'adult';
+        $matched = true;
+    } elseif (preg_match('/\b(seniors?|elderly|old people)\b/', $q)) {
+        $filters['age_group'] = 'senior';
+        $matched = true;
+    }
+
+    // ── "young" → ages 16–24 ─────────────────────────────────────────────────
+    if (preg_match('/\byoung\b/', $q)) {
+        $filters['min_age'] = 16;
+        $filters['max_age'] = 24;
+        $matched = true;
+    }
+
+    // ── Explicit age comparisons ──────────────────────────────────────────────
+    // "above X" / "over X" / "older than X" / "greater than X"
+    if (preg_match('/\b(?:above|over|older\s+than|greater\s+than)\s+(\d+)\b/', $q, $m)) {
+        $filters['min_age'] = (int) $m[1];
+        $matched = true;
+    }
+
+    // "below X" / "under X" / "younger than X" / "less than X"
+    if (preg_match('/\b(?:below|under|younger\s+than|less\s+than)\s+(\d+)\b/', $q, $m)) {
+        $filters['max_age'] = (int) $m[1];
+        $matched = true;
+    }
+
+    // "between X and Y"
+    if (preg_match('/\bbetween\s+(\d+)\s+and\s+(\d+)\b/', $q, $m)) {
+        $filters['min_age'] = (int) $m[1];
+        $filters['max_age'] = (int) $m[2];
+        $matched = true;
+    }
+
+    // "aged X" / "age X"
+    if (preg_match('/\baged?\s+(\d+)\b/', $q, $m)) {
+        $filters['min_age'] = (int) $m[1];
+        $filters['max_age'] = (int) $m[1];
+        $matched = true;
+    }
+
+    // ── Country ───────────────────────────────────────────────────────────────
+    // Sort by length descending so "south africa" matches before "africa"
+    $sortedCountries = array_keys(self::COUNTRY_MAP);
+    usort($sortedCountries, fn($a, $b) => strlen($b) - strlen($a));
+
+    foreach ($sortedCountries as $countryName) {
+        if (str_contains($q, $countryName)) {
+            $filters['country_id'] = self::COUNTRY_MAP[$countryName];
+            $matched = true;
+            break;
+        }
+    }
+
+    // Bare ISO code: "from NG" / "in KE"
+    if (!isset($filters['country_id'])) {
+        if (preg_match('/\b(?:from|in)\s+([A-Za-z]{2})\b/', $q, $m)) {
+            $candidate = strtoupper($m[1]);
+            // Only accept it if it's a known ISO code in our map
+            if (in_array($candidate, self::COUNTRY_MAP, strict: true)) {
+                $filters['country_id'] = $candidate;
+                $matched = true;
+            }
+        }
+    }
+
+    // ── Generic parseable terms ───────────────────────────────────────────────
+    if (preg_match('/\b(people|persons?|profiles?|everyone|all)\b/', $q)) {
+        $matched = true;
+    }
+
+    if (!$matched) {
+        throw new \RuntimeException('Unable to interpret query');
+    }
+
+    return $filters;
+}
 }
