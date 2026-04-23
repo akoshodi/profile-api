@@ -89,7 +89,8 @@ class NaturalLanguageParser
      */
     public function parse(string $query): array
 {
-    $q       = strtolower(trim($query));
+    $normalized = preg_replace('/\s+/', ' ', trim($query));
+    $q          = strtolower($normalized ?? trim($query));
     $filters = [];
     $matched = false;
 
