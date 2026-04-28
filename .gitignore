@@ -18,3 +18,11 @@ cache.properties
 composer.phar
 composer.lock
 .env
+
+# Generated SQLite databases
+/database/*.db
+/database/*.db-shm
+/database/*.db-wal
+/public/database/*.db
+/public/database/*.db-shm
+/public/database/*.db-wal
