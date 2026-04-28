@@ -4,6 +4,7 @@ namespace App;
 
 use PDO;
 use PDOException;
+use Ramsey\Uuid\Uuid;
 use RuntimeException;
 
 class Database
@@ -67,6 +68,66 @@ class Database
              )
          ");
 
+         $this->pdo->exec("
+             CREATE TABLE IF NOT EXISTS users (
+                 id            TEXT PRIMARY KEY,
+                 github_id     TEXT UNIQUE,
+                 username      TEXT,
+                 email         TEXT UNIQUE,
+                 avatar_url    TEXT,
+                 role          TEXT NOT NULL DEFAULT 'analyst',
+                 is_active     INTEGER NOT NULL DEFAULT 1,
+                 last_login_at TEXT,
+                 created_at    TEXT NOT NULL
+             )
+         ");
+
+         $this->pdo->exec("
+             CREATE TABLE IF NOT EXISTS access_tokens (
+                 id         TEXT PRIMARY KEY,
+                 user_id    TEXT NOT NULL,
+                 token_hash TEXT NOT NULL UNIQUE,
+                 expires_at TEXT NOT NULL,
+                 revoked_at TEXT,
+                 created_at TEXT NOT NULL,
+                 FOREIGN KEY(user_id) REFERENCES users(id)
+             )
+         ");
+
+         $this->pdo->exec("
+             CREATE TABLE IF NOT EXISTS refresh_tokens (
+                 id               TEXT PRIMARY KEY,
+                 user_id          TEXT NOT NULL,
+                 token_hash       TEXT NOT NULL UNIQUE,
+                 expires_at       TEXT NOT NULL,
+                 revoked_at       TEXT,
+                 replaced_by_hash TEXT,
+                 created_at       TEXT NOT NULL,
+                 FOREIGN KEY(user_id) REFERENCES users(id)
+             )
+         ");
+
+         $this->pdo->exec("
+             CREATE TABLE IF NOT EXISTS oauth_states (
+                 state         TEXT PRIMARY KEY,
+                 code_challenge TEXT,
+                 mode          TEXT NOT NULL,
+                 redirect_uri  TEXT,
+                 code_verifier TEXT,
+                 expires_at    TEXT NOT NULL,
+                 used_at       TEXT,
+                 created_at    TEXT NOT NULL
+             )
+         ");
+
+         $this->pdo->exec("
+             CREATE TABLE IF NOT EXISTS rate_limits (
+                 key          TEXT PRIMARY KEY,
+                 counter      INTEGER NOT NULL,
+                 window_start INTEGER NOT NULL
+             )
+         ");
+
          // Add country_name column if it doesn't exist yet
          // (for existing databases being upgraded from Stage 1)
          try {
@@ -84,8 +145,55 @@ class Database
                  CREATE INDEX IF NOT EXISTS idx_gender_probability  ON profiles(gender_probability);
                  CREATE INDEX IF NOT EXISTS idx_country_probability ON profiles(country_probability);
              CREATE INDEX IF NOT EXISTS idx_created_at ON profiles(created_at);
+             CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+             CREATE INDEX IF NOT EXISTS idx_access_user ON access_tokens(user_id);
+             CREATE INDEX IF NOT EXISTS idx_access_expiry ON access_tokens(expires_at);
+             CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(user_id);
+             CREATE INDEX IF NOT EXISTS idx_refresh_expiry ON refresh_tokens(expires_at);
          ");
+
+         $this->seedAdminUser();
      }
+
+    private function seedAdminUser(): void
+    {
+        $adminEmail = strtolower(trim($_ENV["ADMIN_EMAIL"] ?? "akoshodi@gmail.com"));
+        if ($adminEmail === "") {
+            return;
+        }
+
+        $username = explode("@", $adminEmail)[0] ?: "admin";
+        $now = gmdate("Y-m-d\\TH:i:s\\Z");
+
+        $stmt = $this->pdo->prepare("SELECT id FROM users WHERE LOWER(email) = LOWER(?)");
+        $stmt->execute([$adminEmail]);
+        $existing = $stmt->fetch();
+
+        if ($existing) {
+            $update = $this->pdo->prepare(
+                "UPDATE users SET role = 'admin', is_active = 1 WHERE id = ?",
+            );
+            $update->execute([$existing["id"]]);
+            return;
+        }
+
+        $insert = $this->pdo->prepare(
+            "INSERT INTO users (id, github_id, username, email, avatar_url, role, is_active, last_login_at, created_at)
+             VALUES (:id, :github_id, :username, :email, :avatar_url, :role, :is_active, :last_login_at, :created_at)",
+        );
+
+        $insert->execute([
+            ":id" => Uuid::uuid7()->toString(),
+            ":github_id" => "seed-admin",
+            ":username" => $username,
+            ":email" => $adminEmail,
+            ":avatar_url" => null,
+            ":role" => "admin",
+            ":is_active" => 1,
+            ":last_login_at" => null,
+            ":created_at" => $now,
+        ]);
+    }
 
     public function getPdo(): PDO
     {
