@@ -8,6 +8,8 @@ A demographic intelligence REST API built on Slim PHP 4. Accepts names, enriches
 
 **Live base URL:** `https://profiles-api.duckdns.org`
 
+**Hosting:** Ubuntu Server on Google Cloud Platform (GCP), Nginx + PHP 8.4-FPM, SSL via Let's Encrypt
+
 ---
 
 ## Table of Contents
@@ -43,7 +45,7 @@ A demographic intelligence REST API built on Slim PHP 4. Accepts names, enriches
 | DI Container | PHP-DI 7 |
 | Environment | vlucas/phpdotenv |
 | IDs | UUID v7 (ramsey/uuid) |
-| Server | Nginx + PHP 8.4-FPM |
+| Server | Nginx + PHP 8.4-FPM (GCP Ubuntu) |
 
 **External classification APIs**
 
@@ -463,16 +465,85 @@ profiles-api/
 ├── data/
 │   └── profiles.json                  # 2026 seed profiles
 ├── .env.example
-├── composer.json
-├── nixpacks.toml
-└── railway.json
+└── composer.json
 ```
 
 ---
 
 ## Deployment
 
-Hosted on Ubuntu with Nginx + PHP 8.4-FPM, SSL via Let's Encrypt, DNS via DuckDNS.
+Hosted on a GCP Compute Engine VM (Ubuntu Server) behind Nginx + PHP 8.4-FPM. SSL is provisioned via Let's Encrypt (Certbot). DNS is managed via DuckDNS.
+
+### Server stack
+
+| Component | Detail |
+|---|---|
+| Cloud | Google Cloud Platform — Compute Engine |
+| OS | Ubuntu 22.04 LTS |
+| Web server | Nginx |
+| PHP | 8.4-FPM |
+| SSL | Let's Encrypt (Certbot) |
+| DNS | DuckDNS (`profiles-api.duckdns.org`) |
+| DB | SQLite at `/var/www/profiles-api/database/profiles.db` |
+
+### First-time server setup
+
+```bash
+# Install dependencies
+sudo apt update && sudo apt install -y nginx php8.4-fpm php8.4-cli php8.4-sqlite3 php8.4-mbstring php8.4-xml php8.4-curl composer git certbot python3-certbot-nginx
+
+# Clone the repo
+sudo mkdir -p /var/www/profiles-api
+sudo chown $USER:$USER /var/www/profiles-api
+git clone https://github.com/akoshodi/profile-api.git /var/www/profiles-api
+cd /var/www/profiles-api
+composer install --no-dev --optimize-autoloader
+
+# Environment
+cp .env.example .env
+nano .env   # fill in GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, etc.
+
+# Database and seed
+mkdir -p database
+php scripts/seed.php
+
+# Permissions
+sudo chown -R www-data:www-data /var/www/profiles-api
+sudo chmod -R 755 /var/www/profiles-api
+```
+
+### Nginx config
+
+Create `/etc/nginx/sites-available/profiles-api`:
+
+```nginx
+server {
+    listen 80;
+    server_name profiles-api.duckdns.org;
+
+    root /var/www/profiles-api/public;
+    index index.php;
+
+    location / {
+        try_files $uri $uri/ /index.php$is_args$args;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.4-fpm.sock;
+    }
+}
+```
+
+```bash
+sudo ln -s /etc/nginx/sites-available/profiles-api /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+# Provision SSL
+sudo certbot --nginx -d profiles-api.duckdns.org
+```
+
+### Deploy updates
 
 ```bash
 cd /var/www/profiles-api
